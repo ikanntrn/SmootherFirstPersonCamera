@@ -1,0 +1,208 @@
+---------------------------------------------------------------------------
+-- tl;dr: dont ungroup anything, just put them in the correct service :) --
+---------------------------------------------------------------------------
+
+--___.......-----......______.......------......____
+--       -- portfolio down for reconstruction... --  \
+-- <@>  _ }-------- kannii.neocities.org --------{    |
+--     | | ____ _ _ __  _ __                          |
+-------| |/ / _` | '_ \| '_ \----.   .---------------'
+-------|   < (_| | |-| | |-| |---`  ( :D   kannicom \
+--     |_|\_\__,_|_| |_|_| |_|       `--`\     @     |   
+-- <@> ---------------------------------  | discord /
+-----.......______......------......._____|.....---'
+
+--[[
+======================================================================================================
+-	TITLE:        Enhanced First-Person Camera System                                                -
+-	DESCRIPTION:  A complete, client-side first-person camera controller. This script handles        -
+-	              camera rotation, character turning, sprinting, dynamic FOV, immersive              -
+-	              head bobbing, and can be controlled remotely for cutscenes or interactions.        -
+-                                                                                                    -
+-	FEATURES:                                                                                        - 
+-	    - Centralized Configuration: All settings are in the 'Config' table for easy edits.          -
+-	    - Frame-Rate Independent Smoothing: Camera movement is smooth and consistent on all devices. -
+-	    - Immersive Head Bob: Customizable camera sway when walking and running.                     -
+-	    - Remote Control: Can be locked/unlocked via RemoteEvents in ReplicatedStorage.              -
+-	    - Clean & Readable: Code has been refactored with clear variable names and sections.         -
+-                                                                                                    -
+-	ORIGINAL CREDITS:                                                                                -
+-	    - WhoBloxxedWho: Initial script concept.                                                     -
+-	    - DoogleFox:    Panner script elements.                                                      -
+-	    - DuruTeru:     Original script compilation and updates.                                     -
+-	                                                                                                 -
+-	MODERNIZATION & ENHANCEMENTS:                                                                    -
+-		- KanniiCom:    Initial fix for modern Roblox, added RemoteEvent functionality.              -
+-                       Major refactor for readability, modularity, and modern features.             -
+-                                                                                                    -
+-	LAST UPDATED:                                                                                    -
+-		- Dec 03, 2023                                                                               -
+======================================================================================================
+--]]
+-- wow great separator
+--[[
+======================================================================================================
+-	--// USAGE EXAMPLE SCRIPT //--                                                                   -
+-                                                                                                    -
+-	TITLE:        Camera & Movement Lock Zone Manager                                                -
+-	DESCRIPTION:  This is a SERVER-SIDE example script. It shows you how to use the RemoteEvents     -
+-	              from the main camera script to create trigger zones that can lock/unlock the       -
+-	              player's camera and movement. It is designed to be easy for beginners to read      -
+-	              and understand.                                                                    -
+-                                                                                                    -
+-	--// HOW TO USE THIS EXAMPLE //--                                                                -
+-                                                                                                    -
+-	Step 1: REQUIRED FILES                                                                           -
+-	    - Make sure the main "Enhanced First-Person Camera System" LocalScript is in                 -
+-	      StarterPlayer > StarterPlayerScripts.                                                      -
+-	    - Make sure you have a folder named "CameraEvents" in ReplicatedStorage.                     -
+-	    - Inside "CameraEvents", make sure you have two RemoteEvents named "LockCam" and             -
+-	      "UnlockCam".                                                                               -
+-                                                                                                    -
+-	Step 2: TAG YOUR PARTS                                                                           -
+-	    - In Studio, go to the VIEW tab and open the "Tag Editor".                                   -
+-	    - Create a new tag named exactly "CameraLockZone".                                           -
+-	    - Select any part(s) in the workspace you want to be a trigger zone and assign this tag.     -
+-                                                                                                    -
+-	Step 3: CUSTOMIZE WITH ATTRIBUTES (Optional)                                                     -
+-	    - Select a tagged part. In the Properties window, scroll to the bottom and click             -
+-	      "Add Attribute".                                                                           -
+-	        - Name: "ForcedLock",   Type: Boolean -> If true, the player can't unlock the camera     -
+-	          with their key.                                                                        -
+-	        - Name: "LockMovement", Type: Boolean -> If true, the player's character will be frozen  -
+-	          when the camera is locked.                                                             -
+-	          inside the zone.                                                                       -
+-                                                                                                    -
+-	Step 4: PLACE THIS SCRIPT                                                                        -
+-	    - Place this entire script into ServerScriptService. Now, any part you tag will              -
+-	      automatically work!                                                                        -
+-                                                                                                    -
+======================================================================================================
+--]]
+
+
+-- // 1. SETUP //
+-- We get all the necessary services and define our variables here.
+
+-- Services are like toolboxes that Roblox gives us to work with different parts of the game.
+local Players = game:GetService("Players")
+local CollectionService = game:GetService("CollectionService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+
+-- This is the tag we will look for on parts. It must match the tag you create in the Tag Editor.
+local CAMERA_ZONE_TAG = "CameraLockZone"
+
+-- We need to find the RemoteEvents that the main camera script is listening for.
+local cameraEventsFolder = ReplicatedStorage:WaitForChild("CameraEvents")
+local lockCamEvent = cameraEventsFolder:WaitForChild("LockCam")
+local unlockCamEvent = cameraEventsFolder:WaitForChild("UnlockCam")
+
+-- This table will keep track of which player is in which zone.
+-- This is important to prevent bugs and ensure events fire correctly. It's our "memory".
+local playersInZones = {}
+local originalPlayerSpeeds = {} -- Remembers a player's speed so we can restore it later.
+
+----------------------------------------------------------------------------------------------------
+
+-- // 2. THE LOGIC //
+-- This single function contains all the logic for making one zone part work.
+
+local function setupZone(zonePart)
+
+	print("Found a part named '"..zonePart.Name.."' and setting it up as a CameraLockZone.")
+	local originalColor = zonePart.Color -- Remember the part's starting color.
+
+	-- This function runs when a player's character FIRST touches the zone.
+	local function onPlayerEnterZone(otherPart)
+		-- The 'otherPart' is whatever hit the zone (e.g., a "LeftFoot" or "Arm").
+		-- Its Parent is the character model.
+		local character = otherPart.Parent
+
+		-- We can get the actual Player object from their character model.
+		local playerWhoTouched = Players:GetPlayerFromCharacter(character)
+
+		-- --- Safety Checks ---
+		-- 1. Was it actually a player? (not an NPC or random falling part)
+		-- 2. Is this player already inside a zone? (If so, we do nothing to avoid bugs).
+		if not playerWhoTouched or playersInZones[playerWhoTouched] then
+			return
+		end
+
+		-- If the checks pass, we remember that this player is now inside this specific zone.
+		playersInZones[playerWhoTouched] = zonePart
+
+		-- --- Read Custom Settings from Attributes ---
+		-- We'll get the custom settings from the part's Attributes.
+		-- If an attribute doesn't exist, we use a default value (false).
+		local isForced = zonePart:GetAttribute("ForcedLock") or false
+		local shouldLockMovement = zonePart:GetAttribute("LockMovement") or false
+
+		print(`Player '{playerWhoTouched.Name}' entered zone '{zonePart.Name}'. Firing LockCam event.`)
+
+		-- Fire the "LockCam" event TO THE CLIENT, telling the main camera script to lock.
+		-- We pass 'isForced' so the camera script knows if the player can unlock it themselves.
+		lockCamEvent:FireClient(playerWhoTouched, isForced)
+
+		-- If the "LockMovement" attribute was true, we freeze the player.
+		if shouldLockMovement then
+			local humanoid = character:FindFirstChildOfClass("Humanoid")
+			if humanoid then
+				-- We must save their original speed first!
+				originalPlayerSpeeds[playerWhoTouched] = { WalkSpeed = humanoid.WalkSpeed, JumpPower = humanoid.JumpPower }
+				humanoid.WalkSpeed = 0
+				humanoid.JumpPower = 0
+			end
+		end
+	end
+
+	-- This function runs when a player's character STOPS touching the zone.
+	local function onPlayerLeaveZone(otherPart)
+		local character = otherPart.Parent
+		local playerWhoTouched = Players:GetPlayerFromCharacter(character)
+
+		-- --- Safety Checks ---
+		-- 1. Was it a player?
+		-- 2. Is this the same player we remembered entering this zone? (Prevents a player leaving a zone they weren't in).
+		if not playerWhoTouched or playersInZones[playerWhoTouched] ~= zonePart then
+			return
+		end
+
+		-- The player has left the zone, so we can remove them from our memory.
+		playersInZones[playerWhoTouched] = nil
+
+		print(`Player '{playerWhoTouched.Name}' left zone '{zonePart.Name}'. Firing UnlockCam event.`)
+
+		-- Fire the "UnlockCam" event TO THE CLIENT, telling the camera script to unlock.
+		unlockCamEvent:FireClient(playerWhoTouched)
+
+		-- If we froze the player's movement, we now restore it.
+		if originalPlayerSpeeds[playerWhoTouched] then
+			local humanoid = character:FindFirstChildOfClass("Humanoid")
+			if humanoid then
+				humanoid.WalkSpeed = originalPlayerSpeeds[playerWhoTouched].WalkSpeed
+				humanoid.JumpPower = originalPlayerSpeeds[playerWhoTouched].JumpPower
+				originalPlayerSpeeds[playerWhoTouched] = nil -- Clean up the saved data.
+			end
+		end
+	end
+
+	-- We connect our functions to the part's Touched and TouchEnded events.
+	zonePart.Touched:Connect(onPlayerEnterZone)
+	zonePart.TouchEnded:Connect(onPlayerLeaveZone)
+end
+
+----------------------------------------------------------------------------------------------------
+
+-- // 3. ACTIVATION //
+-- This code runs when the script starts. It finds all parts with the special tag and sets them up.
+
+-- First, find all parts that are ALREADY tagged when the game starts.
+for _, part in ipairs(CollectionService:GetTagged(CAMERA_ZONE_TAG)) do
+	setupZone(part)
+end
+
+-- Then, listen for any NEW parts that get tagged while the game is running.
+CollectionService:GetInstanceAddedSignal(CAMERA_ZONE_TAG):Connect(setupZone)
+
+print("Camera Zone Manager [Example Script] is running and waiting for players...")
