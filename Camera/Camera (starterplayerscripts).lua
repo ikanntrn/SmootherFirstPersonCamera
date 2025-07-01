@@ -18,7 +18,7 @@ local cam = game.Workspace.CurrentCamera
 
 -- ======== EVENT SETUP ========
 -- Waits for the events in ReplicatedStorage needed for camera control
-local cameraEvents = replicatedStorage:WaitForChild("CameraEvents")
+local cameraEvents = replicatedStorage:WaitForChild("CameraEvents (replicatedstorage)")
 local lockCamEvent = cameraEvents:WaitForChild("LockCam")
 local unlockCamEvent = cameraEvents:WaitForChild("UnlockCam")
 
